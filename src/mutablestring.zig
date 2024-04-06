@@ -3,10 +3,10 @@ const Allocator = std.mem.Allocator;
 
 pub const Options = struct {
     /// Initial capacity of the mutable string.
-    capacity: usize = 0
+    capacity: usize = 0,
 };
 
-/// A mutable string with convenients method to manipulate it.
+/// A mutable UTF-8 string with convenients method to manipulate it.
 pub const MutableString = struct {
     /// Allocator owning the buffer.
     allocator: Allocator,
@@ -19,7 +19,7 @@ pub const MutableString = struct {
 
     /// Initialize a mutable string
     pub fn init(allocator: Allocator, options: Options) !MutableString {
-        return MutableString {
+        return MutableString{
             .allocator = allocator,
             .buffer = try allocator.alloc(u8, options.capacity),
             .len = 0,
@@ -38,45 +38,116 @@ pub const MutableString = struct {
         return s;
     }
 
-    /// Set the content of the string to the provided value.
-    pub fn set(self: *MutableString, value: []const u8) !void {
-        if (value.len > self.buffer.len) {
-            const new_buffer = try self.allocator.dupe(u8, value);
-            self.allocator.free(self.buffer);
-            self.buffer = new_buffer;
-            self.len = new_buffer.len;
-        } else {
-            std.mem.copy(u8, self.buffer, value);
-            self.len = value.len;
+    /// Ensure the internal buffer has the capacity to contains a string of the provided size.
+    /// If the actual buffer is too small, a new buffer will be allocated.
+    /// The new buffer will either have the provided size or twice the capacity of the previous buffer depending
+    /// on the biggest.
+    fn growCapacityUpTo(self: *MutableString, size: usize) !void {
+        if (size < self.buffer.len) {
+            return;
         }
-    }
-
-    /// Resize the internal buffer to the provided size.
-    pub fn resize(self: *MutableString, size: usize) !void {
+        const new_capacity = @max(size, @mulWithOverflow(self.buffer.len, 2)[0]);
         const old_buffer = self.buffer;
-        const new_buffer = try self.allocator.alloc(u8, size);
+        const new_buffer = try self.allocator.alloc(u8, new_capacity);
         std.mem.copy(u8, new_buffer, old_buffer);
         self.allocator.free(old_buffer);
         self.buffer = new_buffer;
     }
 
-    pub fn append() !void {
+    /// Copy the value to the buffer at index.
+    pub fn set(self: *MutableString, index: usize, value: []const u8) !void {
+        const required_capacity = @addWithOverflow(index, value.len);
+        if (required_capacity[1] == 1) {
+            return error.Overflow;
+        }
+        try self.growCapacityUpTo(required_capacity[0]);
+        // Fill the void between previous len and index with zeroes.
+        if (index > self.len) {
+            for (self.len..index) |i| {
+                self.buffer[i] = std.mem.zeroes(u8);
+            }
+        }
+        const dest = self.buffer[index..self.buffer.len];
+        std.mem.copy(u8, dest, value);
+        self.len = @max(self.len, required_capacity[0]);
+    }
 
+    pub fn append(self: *MutableString, value: []const u8) !void {
+        try self.set(self.len, value);
     }
 };
 
+const expect = std.testing.expect;
+const expectError = std.testing.expectError;
+const expectEqualSlices = std.testing.expectEqualSlices;
 const expectEqualStrings = std.testing.expectEqualStrings;
+
+test "growUpToCapacity - Do nothing if buffer is big enough" {
+    var mutable_string = try MutableString.init(std.testing.allocator, .{ .capacity = 10 });
+    defer mutable_string.deinit();
+    try mutable_string.growCapacityUpTo(5);
+    try expect(mutable_string.buffer.len == 10);
+}
+
+test "growUpToCapacity - Double buffer size" {
+    var mutable_string = try MutableString.init(std.testing.allocator, .{ .capacity = 10 });
+    defer mutable_string.deinit();
+    try mutable_string.growCapacityUpTo(11);
+    try expect(mutable_string.buffer.len == 20);
+}
+
+test "growUpToCapacity - Grow up to capacity" {
+    var mutable_string = try MutableString.init(std.testing.allocator, .{ .capacity = 10 });
+    defer mutable_string.deinit();
+    try mutable_string.growCapacityUpTo(50);
+    try expect(mutable_string.buffer.len == 50);
+}
+
+test "set - Overflow when index is too big" {
+    var mutable_string = try MutableString.init(std.testing.allocator, .{});
+    defer mutable_string.deinit();
+    const result = mutable_string.set(std.math.maxInt(usize), "Hello");
+    try expectError(error.Overflow, result);
+}
 
 test "set - Set with content len > buffer len" {
     var mutable_string = try MutableString.init(std.testing.allocator, .{});
     defer mutable_string.deinit();
-    try mutable_string.set("Hello");
+    try mutable_string.set(0, "Hello");
+    try std.testing.expect(mutable_string.len == 5);
     try expectEqualStrings("Hello", mutable_string.slice());
 }
 
 test "set - Set with content len <= buffer len" {
     var mutable_string = try MutableString.init(std.testing.allocator, .{ .capacity = 10 });
     defer mutable_string.deinit();
-    try mutable_string.set("Hello");
+    try mutable_string.set(0, "Hello");
+    try std.testing.expect(mutable_string.len == 5);
     try expectEqualStrings("Hello", mutable_string.slice());
+}
+
+test "set - Set with index > len generates 0 and index + content len > buffer len" {
+    var mutable_string = try MutableString.init(std.testing.allocator, .{});
+    defer mutable_string.deinit();
+    try mutable_string.set(2, "Hello");
+
+    const expected = [_]u8{ 0, 0, 'H', 'e', 'l', 'l', 'o' };
+    try expectEqualSlices(u8, &expected, mutable_string.slice());
+}
+
+test "set - Set with index > len generates 0 and index + content len < buffer len)" {
+    var mutable_string = try MutableString.init(std.testing.allocator, .{ .capacity = 10 });
+    defer mutable_string.deinit();
+    try mutable_string.set(2, "Hello");
+
+    const expected = [_]u8{ 0, 0, 'H', 'e', 'l', 'l', 'o' };
+    try expectEqualSlices(u8, &expected, mutable_string.slice());
+}
+
+test "append - Append text to the end" {
+    var mutable_string = try MutableString.init(std.testing.allocator, .{});
+    defer mutable_string.deinit();
+    try mutable_string.set(0, "Hello");
+    try mutable_string.append(" World");
+    try expectEqualStrings("Hello World", mutable_string.slice());
 }
