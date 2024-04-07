@@ -1,6 +1,8 @@
 const std = @import("std");
-const ztoolbox = @import("./root.zig");
 const Allocator = std.mem.Allocator;
+
+const ztoolbox = @import("./root.zig");
+const MutableString = ztoolbox.string.MutableString;
 
 /// A mutable Uri path with convenients method to manipulate the path.
 pub const MutableUriPath = struct {
@@ -33,6 +35,18 @@ pub const MutableUriPath = struct {
         try self.path_segments.append(encoded_segment);
     }
 
+    /// Append the path to the provided mutable string.
+    pub fn appendToMutableString(self: MutableUriPath, string: *ztoolbox.string.MutableString) !void {
+        var i: usize = 0;
+        while (i < self.path_segments.items.len) {
+            if (self.absolute or i > 0) {
+                try string.append(MutableUriPath.separator);
+            }
+            try string.append(self.path_segments.items[i]);
+            i += 1;
+        }
+    }
+
     /// Return a slice containing the path.
     /// The memory is owned by the provided allocator.
     pub fn toOwnedSlice(self: MutableUriPath, allocator: Allocator) ![]const u8 {
@@ -43,15 +57,7 @@ pub const MutableUriPath = struct {
 
         var string = try ztoolbox.string.MutableString.init(allocator, .{ .capacity = size[0] });
         errdefer string.deinit();
-
-        var i: usize = 0;
-        while (i < self.path_segments.items.len) {
-            if (self.absolute or i > 0) {
-                try string.append(MutableUriPath.separator);
-            }
-            try string.append(self.path_segments.items[i]);
-            i += 1;
-        }
+        try self.appendToMutableString(string);
         return string.slice();
     }
 
@@ -81,28 +87,28 @@ test "appendSlice - Escape slice & append to fragments" {
     try expectEqualStrings("My%20slice", path.path_segments.getLast());
 }
 
-test "toOwnedSlice - Absolute path" {
+test "appendToMutableString - Absolute path" {
     var path = try MutableUriPath.init(std.testing.allocator, true);
     defer path.deinit();
     try path.appendSlice("Hello");
     try path.appendSlice("World");
 
-    const slice = try path.toOwnedSlice(std.testing.allocator);
-    defer std.testing.allocator.free(slice);
+    var string = try MutableString.init(std.testing.allocator, .{});
+    defer string.deinit();
 
-    try expectEqualStrings("/Hello/World", slice);
+    try expectEqualStrings("/Hello/World", string.slice());
 }
 
-test "toOwnedSlice - Relative path" {
+test "appendToMutableString - Relative path" {
     var path = try MutableUriPath.init(std.testing.allocator, false);
     defer path.deinit();
     try path.appendSlice("Hello");
     try path.appendSlice("World");
 
-    const slice = try path.toOwnedSlice(std.testing.allocator);
-    defer std.testing.allocator.free(slice);
+    var string = try MutableString.init(std.testing.allocator, .{});
+    defer string.deinit();
 
-    try expectEqualStrings("Hello/World", slice);
+    try expectEqualStrings("Hello/World", string.slice());
 }
 
 test "sliceLen - Absolute path" {
