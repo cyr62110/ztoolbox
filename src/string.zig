@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-pub const MutableString = @import("./mutablestring.zig");
+pub const MutableString = @import("./mutablestring.zig").MutableString;
 
 /// Return true if the provided string is blank.
 /// A blank string is empty or contains only space characters.

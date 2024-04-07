@@ -1,11 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub const Options = struct {
-    /// Initial capacity of the mutable string.
-    capacity: usize = 0,
-};
-
 /// A mutable UTF-8 string with convenients method to manipulate it.
 pub const MutableString = struct {
     /// Allocator owning the buffer.
@@ -16,6 +11,11 @@ pub const MutableString = struct {
     buffer: []u8,
     /// Actual length of the string contained in the buffer.
     len: usize,
+
+    pub const Options = struct {
+        /// Initial capacity of the mutable string.
+        capacity: usize = 0,
+    };
 
     /// Initialize a mutable string
     pub fn init(allocator: Allocator, options: Options) !MutableString {
@@ -43,15 +43,25 @@ pub const MutableString = struct {
     /// The new buffer will either have the provided size or twice the capacity of the previous buffer depending
     /// on the biggest.
     fn growCapacityUpTo(self: *MutableString, size: usize) !void {
-        if (size < self.buffer.len) {
+        if (size <= self.buffer.len) {
             return;
         }
         const new_capacity = @max(size, @mulWithOverflow(self.buffer.len, 2)[0]);
         const old_buffer = self.buffer;
         const new_buffer = try self.allocator.alloc(u8, new_capacity);
         std.mem.copy(u8, new_buffer, old_buffer);
-        self.allocator.free(old_buffer);
         self.buffer = new_buffer;
+        self.allocator.free(old_buffer);
+    }
+
+    /// Reduce the size of the buffer to exactly the size of the content.
+    pub fn trimToSize(self: *MutableString) !void {
+        const new_buffer = try self.allocator.alloc(u8, self.len);
+        const old_buffer = self.buffer;
+        const trimmed_source = self.buffer[0..self.len];
+        std.mem.copy(u8, new_buffer, trimmed_source);
+        self.buffer = new_buffer;
+        self.allocator.free(old_buffer);
     }
 
     /// Copy the value to the buffer at index.
@@ -85,7 +95,7 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 test "growUpToCapacity - Do nothing if buffer is big enough" {
     var mutable_string = try MutableString.init(std.testing.allocator, .{ .capacity = 10 });
     defer mutable_string.deinit();
-    try mutable_string.growCapacityUpTo(5);
+    try mutable_string.growCapacityUpTo(10);
     try expect(mutable_string.buffer.len == 10);
 }
 
